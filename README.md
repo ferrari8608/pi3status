@@ -6,4 +6,6 @@
     <li><strike>Multithreading</strike></li>
     <li>Configuration via config file</li>
     <li>Make a package with setuptools(?)</li>
+    <li>Finish implementing colors</li>
+    <li>Implement events</li>
 </ul>
