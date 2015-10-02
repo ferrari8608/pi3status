@@ -3,7 +3,7 @@
 
 <strong>TODO:</strong>
 <ul>
-    <li>~~Multithreading~~</li>
+    <li><strike>Multithreading</strike></li>
     <li>Configuration via config file</li>
     <li>Make a package with setuptools(?)</li>
 </ul>
