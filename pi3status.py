@@ -4,19 +4,27 @@ import alsaaudio
 import collections
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
+from configparser import ConfigParser
 from datetime import datetime
-from pynvml import *
+from glob import glob
+from queue import Queue
+
+try:
+    from pynvml import *
+except ImportError:
+    _NVIDIA_SUPPORT = False
+else:
+    _NVIDIA_SUPPORT = True
 
 # Set default global values
 _DEF_REFRESH = 10  # Seconds
 _DEF_STRFTIME = '%a %Y-%m-%d %H:%M'
-_DEF_TEST_ADDRESS = 'https://www.google.com'
-_DEF_TIMEOUT = 0.1  # Seconds
 _PACMAN_CACHE_DIR = '/var/cache/pacman/pkg'
 COLORS = {
     'CYAN':   '#00FFFF',
@@ -26,12 +34,13 @@ COLORS = {
     'YELLOW': '#FFFF00',
 }
 
-class GenericWorkerThread(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
+class WorkerThread(threading.Thread):
+    def __init__(self, args):
+        super().__init__()
         self.output = None
+        self.args = args
 
-class Volume(GenericWorkerThread):
+class Volume(WorkerThread):
     """Check the volume level percentage"""
 
     def run(self):
@@ -56,32 +65,6 @@ class Volume(GenericWorkerThread):
         }
 
 
-class Uptime(GenericWorkerThread):
-    """Check the OS uptime"""
-
-    def run(self):
-        with open('/proc/uptime') as upfile:
-            uptime_str = _hr_time(int(upfile.read().split('.')[0]))
-        self.output = {
-            'name':      'uptime',
-            'full_text': ' UPTIME: {} '.format(uptime_str),
-            'separator':  False,
-        }
-
-
-class Load(GenericWorkerThread):
-    """Check the current system load"""
-
-    def run(self):
-        with open('/proc/loadavg') as loadfile:
-            load_str = ' '.join(loadfile.read().split()[:3])
-        self.output = {
-            'name':      'load',
-            'full_text': ' LOAD: {} '.format(load_str),
-            'separator': False,
-        }
-
-
 class DiskFree(threading.Thread):
     """Check free disk space in human readable units"""
 
@@ -101,40 +84,20 @@ class DiskFree(threading.Thread):
         }
 
 
-class CurrentTime(threading.Thread):
-    """Check the current time and output in the specified format"""
-
-    def __init__(self, timeform=_DEF_STRFTIME):
-        threading.Thread.__init__(self)
-        self.timeform = timeform
-        self.output = None
-
-    def run(self):
-        self.output = {
-            'name':      'time',
-            'full_text': ' {1:{0}} '.format(self.timeform, datetime.now()),
-            'separator': False,
-            'color':     '#00FFFF',
-        }
-
-
 class WANConnection(threading.Thread):
     """Open a test URL and output the status of the request."""
 
-    def __init__(self, testaddr=_DEF_TEST_ADDRESS):
+    def __init__(self, testaddr):
         threading.Thread.__init__(self)
         self.testaddr = testaddr
         self.output = None
 
     def run(self):
         try:
-            urllib.request.urlopen(testaddr, timeout=_DEF_TIMEOUT)
-        except urllib.request.URLError:
+            dns_lookup_test = socket.gethostbyname(self.testaddr)
+        except OSError:
             status = 'DOWN'
             color = COLORS['RED']
-        except:
-            status = 'ERROR'
-            color =  COLORS['YELLOW']
         else:
             status = 'UP'
             color = COLORS['GREEN']
@@ -144,7 +107,6 @@ class WANConnection(threading.Thread):
             'color':     color,
             'separator': False,
         }
-
 
 class GPUStats(threading.Thread):
     """Check GPU temperature and fan speed"""
@@ -165,35 +127,70 @@ class GPUStats(threading.Thread):
         }
 
 
-class Updates(GenericWorkerThread):
+def load(args):
+    with open('/proc/loadavg') as loadfile:
+        load_str = ' '.join(loadfile.read().split()[:3])
+
+    return {
+        'name':      args['function'],
+        'full_text': args['format'].format(load_str),
+        'separator': args['separator'],
+    }
+
+def date_time(args):
+    return {
+        'name':      args['function'],
+        'full_text': datetime.now().strftime(args['format']),
+        'separator': args['separator'],
+    }
+
+def uptime(args):
+    with open('/proc/uptime') as upfile:
+        uptime_str = _hr_time(int(upfile.read().split('.')[0]))
+
+    return {
+        'name':      args['function'],
+        'instance':  args['instance'],
+        'full_text': args['format'].format(uptime_str),
+        'separator': args['separator'],
+    }
+
+def pacman_updates(args):
     """Check how many system updates are available"""
 
-    def run(self):
+    try:
         packages = subprocess.check_output('checkupdates').splitlines()
-        package_count = len(packages)
-        if package_count:
-            color = COLORS['YELLOW']
-        else:
-            color = COLORS['GREEN']
-        self.output = {
-            'name':      'updates',
-            'full_text': ' UPDATES: {} '.format(package_count),
-            'color':     color,
-            'separator': False,
-        }
+    except subprocess.CalledProcessError as err:
+        print(err)
+        sys.exit(1)
+
+    return {
+        'name':      args['function'],
+        'instance':  args['instance'],
+        'full_text': args['format'].format(package_count),
+        'separator': args['separator'],
+    }
 
 
-class PacmanCache(GenericWorkerThread):
-    """Check how many package files are in the pacman cache directory"""
+def file_count(args):
+    """This function requires a directory path. Optional arguments are a string
+       to glob and color thresholds.
 
-    def run(self):
-        files = len(os.listdir(_PACMAN_CACHE_DIR))
-        self.output = {
-            'name':      'pacman_cache',
-            'full_text': ' PACMAN CACHE: {} '.format(files),
-            'separator': False,
-        }
+       Returns the total file count of a directory matching an optional pattern
+    """
 
+    try:
+        files = glob(os.path.join(args['directory'], args['pattern']))
+    except KeyError:
+        files = os.listdir(args['directory'])
+    file_count = len(files)
+
+    return {
+        'name':      args['function'],
+        'instance':  args['instance'],
+        'full_text': args['format'].format(file_count),
+        'separator': args['separator'],
+    }
 
 def _hr_diskspace(bytes):
     """Convert bytes to a human readable string"""
@@ -236,7 +233,10 @@ def _hr_time(seconds):
         return '{}y {}d'.format(years, days)
 
 def main():
-    nvmlInit()  # Required for Nvidia GPU stats
+    if _NVIDIA_SUPPORT:
+        nvmlInit()
+
+    # Get the JSON ball rolling
     json_seps = (',', ':')
     version = {"version": 1}
     version_str = json.dumps(version, separators=json_seps)
@@ -244,11 +244,10 @@ def main():
 
     # Initialize the worker threads
     worker_threads = (
-        Updates(),
         PacmanCache(),
         GPUStats(),
-#        WANConnection(),  # Stopped working correctly around when
-        DiskFree('/'),     # threading was implemented. Not sure why.
+        WANConnection('google.com'),
+        DiskFree('/'),
         DiskFree('/home'),
         Load(),
         Uptime(),
