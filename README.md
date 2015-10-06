@@ -1,4 +1,4 @@
-# py3status
+# pi3status
 #### Custom implementation of i3status, written in Python
 
 <strong>TODO:</strong>
