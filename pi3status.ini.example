@@ -1,50 +1,40 @@
 [System Updates]
 function = pacman_updates
 format = UPDATES: {}
-separator = False
 
 [Pacman Cache]
 function = file_count
 directory = /var/cache/pacman/pkg
 format = PACMAN CACHE: {}
-separator = False
 
-#[WAN Connection]
-#function = wan_test
-#address = https://www.google.com
-#format = WAN: {}
-#separator = False
+[WAN Connection]
+function = wan_test
+address = https://www.google.com
+format = WAN: {}
 
 [Root Usage]
 function = disk_free
 mount = /
-format = {mount}: {free}
-percentage = False
-separator = False
+format = {}: {} GB
 
 [Home Usage]
 function = disk_free
 mount = /home
-format = {mount}: {free}
-separator = False
+format = {}: {} GB
 
 [System Load]
 function = load
 format = LOAD: {}
-separator = False
 
 [System Uptime]
 function = uptime
 format = UPTIME: {}
-separator = False
 
-#[Volume Level]
-#function = alsa_volume
-#format = ♫ {}%
-#separator = False
+[Volume Level]
+function = alsa_volume
+format = ♫ {}%
 
 [Current Time]
-function = date_time
+function = datetime
 format = %a %Y-%m-%d %H:%M
-separator = False
 
