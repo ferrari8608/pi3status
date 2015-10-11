@@ -29,7 +29,8 @@ _DEF_STRFTIME = '%a %Y-%m-%d %H:%M'
 _DEF_CONFIG_PATH = os.path.expanduser('~/.config/pi3status/config.ini')
 _FUNC_MAP = dict()  # Initialize
 _PACMAN_CACHE_DIR = '/var/cache/pacman/pkg'
-COLORS = {
+_VERSION = 1
+_COLORS = {
     'CYAN':   '#00FFFF',
     'GREEN':  '#00FF00',
     'RED':    '#FF0000',
@@ -47,12 +48,12 @@ COLORS = {
 #        except alsaaudio.ALSAAudioError:
 #            percentage = 'ERROR'
 #            instance = None
-#            color = COLORS['RED']
+#            color = _COLORS['RED']
 #        else:
 #            percentage = str(int(sum(volumes) / len(volumes)))
 #            stats = (mixer.cardname(), mixer.mixer(), str(mixer.mixerid()))
 #            instance = '.'.join(stats)
-#            color = COLORS['WHITE']
+#            color = _COLORS['WHITE']
 #        self.output = {
 #            'name':      'volume',
 #            'instance':  instance,
@@ -75,10 +76,10 @@ COLORS = {
 #            dns_lookup_test = socket.gethostbyname(self.testaddr)
 #        except OSError:
 #            status = 'DOWN'
-#            color = COLORS['RED']
+#            color = _COLORS['RED']
 #        else:
 #            status = 'UP'
-#            color = COLORS['GREEN']
+#            color = _COLORS['GREEN']
 #        self.output = {
 #            'name':      'wan_connection',
 #            'full_text': ' WAN: {} ' .format(status),
@@ -119,28 +120,28 @@ class WorkerThread(threading.Thread):
 def disk_free(args):
     stat = os.statvfs(args['mount'])
     if args['percentage']:
-        free = (stat.f_bavail * 100) / stat.f_blocks
+        free = int((stat.f_bavail * 100) / stat.f_blocks)
     else:
         free = _hr_diskspace(stat.f_bavail * stat.f_frsize)
     return {
         'name':      args['function'],
         'instance':  args['mount'],
         'full_text': args['format'].format(mount=args['mount'], free=free),
-        'separator': False,
+        'separator': bool(args['separator']),
     }
 
 def disk_used(args):
     stat = os.statvfs(args['mount'])
     blocks_used = (stat.f_blocks - stat.f_bavail)
     if args.getboolean('percentage'):
-        used = (blocks_used * 100) / stat.f_blocks
+        used = int((blocks_used * 100) / stat.f_blocks)
     else:
         used = _hr_diskspace(blocks_used * stat.f_frsize)
     return {
         'name':      args['function'],
         'instance':  args['mount'],
         'full_text': args['format'].format(mount=args['mount'], used=used),
-        'separator': False,
+        'separator': bool(args['separator']),
     }
 
 def load(args):
@@ -150,14 +151,14 @@ def load(args):
     return {
         'name':      args['function'],
         'full_text': args['format'].format(load_str),
-        'separator': args['separator'],
+        'separator': bool(args['separator']),
     }
 
 def date_time(args):
     return {
         'name':      args['function'],
         'full_text': datetime.now().strftime(args['format']),
-        'separator': args['separator'],
+        'separator': bool(args['separator']),
     }
 
 def uptime(args):
@@ -168,7 +169,7 @@ def uptime(args):
         'name':      args['function'],
         'instance':  args['instance'],
         'full_text': args['format'].format(uptime_str),
-        'separator': args['separator'],
+        'separator': bool(args['separator']),
     }
 
 def pacman_updates(args):
@@ -184,7 +185,7 @@ def pacman_updates(args):
         'name':      args['function'],
         'instance':  args['instance'],
         'full_text': args['format'].format(len(packages)),
-        'separator': args['separator'],
+        'separator': bool(args['separator']),
     }
 
 
@@ -198,7 +199,7 @@ def file_count(args):
         'name':      args['function'],
         'instance':  args['instance'],
         'full_text': args['format'].format(len(files)),
-        'separator': args['separator'],
+        'separator': bool(args['separator']),
     }
 
 def _hr_diskspace(bytes):
@@ -258,8 +259,8 @@ def _get_config_sections(config):
         config.remove_section(section)
         yield section_values
 
-def _init_json_output(json_seps):
-    version = {"version": 1}
+def _init_json(json_seps, version_number):
+    version = {"version": version_number}
     version_str = json.dumps(version, separators=json_seps)
     print(version_str, '[', sep='\n', flush=True)
 
@@ -273,13 +274,18 @@ def parse_arguments():
     global _DEF_CONFIG_PATH
     global _DEF_SLEEP
     parser = ArgumentParser()
-    parser.add_argument('-f', '--config', default=_DEF_CONFIG_PATH,
+    parser.add_argument('-c', '--no-color', action='store_true',
+                        help='disable coloring (enabled by default)')
+    parser.add_argument('-f', '--config', action='store',
+                        default=_DEF_CONFIG_PATH,
                         help='specify an alternate config file location')
     parser.add_argument('-s', '--sleep', type=float, default=_DEF_SLEEP,
                         help='time in seconds between refresh')
     return parser.parse_args()
 
 def main():
+    # Set up some values
+    global _VERSION
     func_mapper = {
         'date_time':      date_time,
         'disk_free':      disk_free,
@@ -291,18 +297,18 @@ def main():
     }
     json_seps = (',', ':')
 
+    # Get to business initializing the things
     args = parse_arguments()
     if _NVIDIA_SUPPORT:
         nvmlInit()
     config = _parse_config(args.config)
-    _init_json_output(json_seps)
-
-    # Initialize and first run the workers
+    _init_json_output(json_seps, _VERSION)
     workers = [WorkerThread(items, func_mapper) 
                for items in _get_config_sections(config)]
     for worker in workers:
         worker.start()
 
+    # Begin main program loop
     while True:
         # Dump JSON to stdout
         _wait_for_threads()
